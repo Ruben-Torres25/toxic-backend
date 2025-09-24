@@ -1,3 +1,4 @@
+﻿
 # Toxic Backend (NestJS + Postgres)
 
 Ahora configurado para **PostgreSQL** por defecto.
@@ -33,4 +34,4 @@ npm run start:dev
 - Pedidos: `/orders` (CRUD + `/confirm`, `/cancel`)
 - Caja: `/cash` (`current`, `open`, `close`, `movement`, `report`, `movements`)
 
-> `synchronize: true` está activo solo para desarrollo. En producción usar **migraciones**.
+> `synchronize: true` estÃ¡ activo solo para desarrollo. En producciÃ³n usar **migraciones**.

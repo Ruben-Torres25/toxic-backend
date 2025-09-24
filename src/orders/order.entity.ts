@@ -5,6 +5,10 @@ import { Product } from '../products/product.entity';
 
 @Entity('orders')
 export class Order extends BaseEntity {
+  // 👇 NUEVO: código legible del pedido
+  @Column({ type: 'varchar', length: 16, unique: true, nullable: true })
+  code!: string | null;
+
   @Column({ type: 'varchar', default: 'pending' })
   status!: 'pending' | 'confirmed' | 'canceled';
 
@@ -18,6 +22,7 @@ export class Order extends BaseEntity {
   @OneToMany(() => OrderItem, (i) => i.order, { cascade: true })
   items!: OrderItem[];
 }
+
 
 @Entity('order_items')
 export class OrderItem extends BaseEntity {
