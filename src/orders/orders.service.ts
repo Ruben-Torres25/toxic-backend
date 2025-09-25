@@ -1,3 +1,4 @@
+// src/orders/orders.service.ts
 import {
   BadRequestException,
   Injectable,
@@ -25,50 +26,43 @@ export class OrdersService {
     private cashService: CashService,
   ) {}
 
-  // ---------- helpers de consultas ----------
-
-  private applyIncludes(
-    qb: SelectQueryBuilder<Order>,
-    include: IncludeParam[] = [],
-  ) {
-    if (include.includes('customer')) {
-      qb.leftJoinAndSelect('o.customer', 'customer');
-    }
-    if (include.includes('items')) {
-      qb.leftJoinAndSelect('o.items', 'items');
-    }
+  // ---- helpers de query ----
+  private applyIncludes(qb: SelectQueryBuilder<Order>, include: IncludeParam[] = []) {
+    if (include.includes('customer')) qb.leftJoinAndSelect('o.customer', 'customer');
+    if (include.includes('items')) qb.leftJoinAndSelect('o.items', 'items');
     return qb;
   }
-
-  private applySort(qb: SelectQueryBuilder<Order>, sort?: SortParam) {
-    // default por fecha desc
-    if (!sort || sort === 'date_desc') {
-      qb.orderBy('o.createdAt', 'DESC');
-      return qb;
-    }
-    if (sort === 'date_asc') {
-      qb.orderBy('o.createdAt', 'ASC');
-      return qb;
-    }
-
-    // Seguro ante NULL o '' -> extrae dígitos y castea
-    // COALESCE(o.code,'') -> REGEXP_REPLACE(...,'\D','', 'g') -> NULLIF(...,'') -> CAST(... AS INTEGER)
-    const numExpr =
-      `CAST(NULLIF(REGEXP_REPLACE(COALESCE(o.code, ''), '\\D', '', 'g'), '') AS INTEGER)`;
-
-    if (sort === 'code_desc') {
-      qb.orderBy(numExpr, 'DESC', 'NULLS LAST');
-    } else if (sort === 'code_asc') {
-      qb.orderBy(numExpr, 'ASC', 'NULLS FIRST');
-    }
-
-    // criterio secundario estable
-    qb.addOrderBy('o.createdAt', 'DESC');
-    return qb;
+  private applySort(
+  qb: SelectQueryBuilder<Order>,
+  sort?: 'code_asc' | 'code_desc' | 'date_desc' | 'date_asc',
+) {
+  // Por defecto: fecha DESC
+  if (!sort || sort === 'date_desc') {
+    return qb.orderBy('o.createdAt', 'DESC');
+  }
+  if (sort === 'date_asc') {
+    return qb.orderBy('o.createdAt', 'ASC');
   }
 
-  // ---------- queries ----------
+  // Extrae solo dígitos del code → "PED003" => "003" => ::int => 3
+  // Usamos '[^0-9]' para evitar backslashes.
+  const codeNumExpr =
+    `NULLIF(regexp_replace(COALESCE(o.code, ''), '[^0-9]', '', 'g'), '')::int`;
 
+  if (sort === 'code_asc') {
+    qb.orderBy(codeNumExpr, 'ASC', 'NULLS FIRST');
+  } else {
+    qb.orderBy(codeNumExpr, 'DESC', 'NULLS LAST');
+  }
+
+  // Criterio secundario estable
+  qb.addOrderBy('o.createdAt', 'DESC');
+
+  return qb;
+}
+
+
+  // ---- list / get ----
   list(include: IncludeParam[] = [], sort?: SortParam) {
     const qb = this.orders.createQueryBuilder('o');
     this.applyIncludes(qb, include);
@@ -84,15 +78,13 @@ export class OrdersService {
     return order;
   }
 
-  // ---------- comandos ----------
-
+  // ---- create ----
   async create(dto: CreateOrderDto) {
     if (!dto.items?.length) {
       throw new BadRequestException('El pedido requiere items');
     }
 
     return this.dataSource.transaction(async (manager) => {
-      // Cliente (opcional)
       let customer: Customer | null = null;
       if (dto.customerId) {
         customer = await manager.findOne(Customer, {
@@ -102,7 +94,6 @@ export class OrdersService {
         if (!customer) throw new BadRequestException('Cliente inválido');
       }
 
-      // Lock de productos involucrados
       const ids = Array.from(new Set(dto.items.map((i) => i.productId)));
       const prods = await manager.find(Product, {
         where: { id: In(ids) },
@@ -110,7 +101,6 @@ export class OrdersService {
       });
       const byId = new Map(prods.map((p) => [p.id, p]));
 
-      // Validar disponible
       for (const it of dto.items) {
         const p = byId.get(it.productId);
         if (!p) throw new BadRequestException(`Producto inválido: ${it.productId}`);
@@ -119,27 +109,26 @@ export class OrdersService {
           throw new BadRequestException(`Stock insuficiente para ${p.name} (disp: ${available})`);
         }
       }
-      // Reservar
       for (const it of dto.items) {
         const p = byId.get(it.productId)!;
         p.reserved = Number(p.reserved || 0) + Number(it.quantity || 0);
       }
       await manager.save(prods);
 
-      // Crear pedido + items
       let total = 0;
       const order = manager.create(Order, {
         status: 'pending',
         customer: customer || undefined,
         total: 0,
+        notes: dto.notes ?? null,
       });
       const saved = await manager.save(order);
 
       for (const it of dto.items) {
         const p = byId.get(it.productId)!;
-        const unitPrice = it.unitPrice ?? Number(p.price || 0);
-        const discount = Number(it.discount || 0);
-        const lineTotal = (unitPrice * Number(it.quantity)) - discount;
+        const unitPrice = Number(it.unitPrice ?? p.price ?? 0);
+        const discount = Number(it.discount ?? 0);
+        const lineTotal = unitPrice * Number(it.quantity) - discount;
         total += lineTotal;
 
         const item = manager.create(OrderItem, {
@@ -155,22 +144,104 @@ export class OrdersService {
       }
 
       saved.total = total;
-      // código PEDxxx se asigna vía trigger o en base.entity/BeforeInsert si ya lo tenés
       return manager.save(saved);
     });
   }
 
+  // ---- update (AHORA guarda items + notas) ----
   async update(id: string, dto: UpdateOrderDto) {
-    const order = await this.get(id);
-    if (dto.customerId) {
-      const c = await this.customers.findOne({ where: { id: dto.customerId } });
-      if (!c) throw new BadRequestException('Cliente inválido');
-      order.customer = c;
-    }
-    if (dto.status) order.status = dto.status;
-    return this.orders.save(order);
+    return this.dataSource.transaction(async (manager) => {
+      const order = await manager.findOne(Order, { where: { id } });
+      if (!order) throw new NotFoundException('Pedido no encontrado');
+      if (order.status === 'confirmed' || order.status === 'canceled') {
+        throw new BadRequestException('No se puede editar un pedido confirmado/cancelado');
+      }
+
+      // cliente
+      if (dto.customerId) {
+        const c = await manager.findOne(Customer, { where: { id: dto.customerId } });
+        if (!c) throw new BadRequestException('Cliente inválido');
+        order.customer = c;
+      }
+      // estado (opcional)
+      if (dto.status) order.status = dto.status;
+      // notas (opcional)
+      if (typeof dto.notes === 'string') order.notes = dto.notes;
+
+      // si no vienen items, sólo persistimos cabecera
+      if (!dto.items) {
+        return manager.save(order);
+      }
+
+      // ---- reemplazo de líneas con control de reservas ----
+      const prevItems = await manager.find(OrderItem, { where: { orderId: order.id } });
+
+      // 1) revertir reservas previas
+      if (prevItems.length) {
+        const prevIds = Array.from(new Set(prevItems.map(i => i.productId)));
+        const prevProds = await manager.find(Product, {
+          where: { id: In(prevIds) },
+          lock: { mode: 'pessimistic_write' },
+        });
+        const prevMap = new Map(prevProds.map(p => [p.id, p]));
+        for (const it of prevItems) {
+          const p = prevMap.get(it.productId)!;
+          p.reserved = Math.max(0, Number(p.reserved || 0) - Number(it.quantity || 0));
+        }
+        await manager.save(prevProds);
+      }
+
+      // 2) validar y reservar para los nuevos items
+      const newIds = Array.from(new Set(dto.items.map(i => i.productId)));
+      const newProds = await manager.find(Product, {
+        where: { id: In(newIds) },
+        lock: { mode: 'pessimistic_write' },
+      });
+      const newMap = new Map(newProds.map(p => [p.id, p]));
+
+      for (const it of dto.items) {
+        const p = newMap.get(it.productId);
+        if (!p) throw new BadRequestException(`Producto inválido: ${it.productId}`);
+        const available = Math.max(0, Number(p.stock || 0) - Number(p.reserved || 0));
+        if (available < it.quantity) {
+          throw new BadRequestException(`Stock insuficiente para ${p.name} (disp: ${available})`);
+        }
+      }
+      for (const it of dto.items) {
+        const p = newMap.get(it.productId)!;
+        p.reserved = Number(p.reserved || 0) + Number(it.quantity || 0);
+      }
+      await manager.save(newProds);
+
+      // 3) reemplazar líneas y recalcular total
+      await manager.delete(OrderItem, { orderId: order.id });
+
+      let newTotal = 0;
+      for (const it of dto.items) {
+        const p = newMap.get(it.productId)!;
+        const unitPrice = Number(it.unitPrice ?? p.price ?? 0);
+        const discount = Number(it.discount ?? 0); // MONTO, viene del front (conversión %→$)
+        const lineTotal = unitPrice * Number(it.quantity) - discount;
+        newTotal += lineTotal;
+
+        const line = manager.create(OrderItem, {
+          orderId: order.id,
+          productId: p.id,
+          productName: it.productName || p.name,
+          unitPrice,
+          quantity: it.quantity,
+          discount,
+          lineTotal,
+        });
+        await manager.save(line);
+      }
+
+      order.total = newTotal;
+      return manager.save(order);
+    });
   }
 
+  // ---- confirm ----
   async confirm(id: string) {
     const result = await this.dataSource.transaction(async (manager) => {
       const order = await manager.findOne(Order, { where: { id } });
@@ -206,6 +277,7 @@ export class OrdersService {
     return result;
   }
 
+  // ---- cancel ----
   async cancel(id: string) {
     return this.dataSource.transaction(async (manager) => {
       const order = await manager.findOne(Order, { where: { id } });
@@ -234,6 +306,7 @@ export class OrdersService {
     });
   }
 
+  // ---- remove ----
   async remove(id: string) {
     const order = await this.get(id);
     if (order.status === 'confirmed') {
