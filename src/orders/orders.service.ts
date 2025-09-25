@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-  import { InjectRepository } from '@nestjs/typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository, SelectQueryBuilder } from 'typeorm';
 import { Order, OrderItem } from './order.entity';
 import { Customer } from '../customers/customer.entity';
@@ -25,7 +25,7 @@ export class OrdersService {
     private cashService: CashService,
   ) {}
 
-  // ------- helpers ---------
+  // ---------- helpers de consultas ----------
 
   private applyIncludes(
     qb: SelectQueryBuilder<Order>,
@@ -40,11 +40,8 @@ export class OrdersService {
     return qb;
   }
 
-  private applySort(
-    qb: SelectQueryBuilder<Order>,
-    sort?: SortParam,
-  ) {
-    // Fallback por fecha si no viene sort
+  private applySort(qb: SelectQueryBuilder<Order>, sort?: SortParam) {
+    // default por fecha desc
     if (!sort || sort === 'date_desc') {
       qb.orderBy('o.createdAt', 'DESC');
       return qb;
@@ -53,21 +50,24 @@ export class OrdersService {
       qb.orderBy('o.createdAt', 'ASC');
       return qb;
     }
-    // Orden por el número dentro de code: 'PED001' -> 1
-    // Postgres: REGEXP_REPLACE(o.code, '\D','','g') :: int
-    const numExpr = `CAST(REGEXP_REPLACE(o.code, '\\D', '', 'g') AS INTEGER)`;
+
+    // Seguro ante NULL o '' -> extrae dígitos y castea
+    // COALESCE(o.code,'') -> REGEXP_REPLACE(...,'\D','', 'g') -> NULLIF(...,'') -> CAST(... AS INTEGER)
+    const numExpr =
+      `CAST(NULLIF(REGEXP_REPLACE(COALESCE(o.code, ''), '\\D', '', 'g'), '') AS INTEGER)`;
 
     if (sort === 'code_desc') {
       qb.orderBy(numExpr, 'DESC', 'NULLS LAST');
     } else if (sort === 'code_asc') {
       qb.orderBy(numExpr, 'ASC', 'NULLS FIRST');
     }
-    // Segundo criterio para estabilidad
+
+    // criterio secundario estable
     qb.addOrderBy('o.createdAt', 'DESC');
     return qb;
   }
 
-  // ------- queries ----------
+  // ---------- queries ----------
 
   list(include: IncludeParam[] = [], sort?: SortParam) {
     const qb = this.orders.createQueryBuilder('o');
@@ -84,7 +84,7 @@ export class OrdersService {
     return order;
   }
 
-  // ------- commands ----------
+  // ---------- comandos ----------
 
   async create(dto: CreateOrderDto) {
     if (!dto.items?.length) {
@@ -92,10 +92,6 @@ export class OrdersService {
     }
 
     return this.dataSource.transaction(async (manager) => {
-      // Número legible
-      const [{ v }] = await manager.query(`SELECT nextval('order_code_seq') AS v`);
-      const code = `PED${String(v).padStart(3, '0')}`; // usa 4 para PED0001
-
       // Cliente (opcional)
       let customer: Customer | null = null;
       if (dto.customerId) {
@@ -106,7 +102,7 @@ export class OrdersService {
         if (!customer) throw new BadRequestException('Cliente inválido');
       }
 
-      // Lock productos
+      // Lock de productos involucrados
       const ids = Array.from(new Set(dto.items.map((i) => i.productId)));
       const prods = await manager.find(Product, {
         where: { id: In(ids) },
@@ -114,7 +110,7 @@ export class OrdersService {
       });
       const byId = new Map(prods.map((p) => [p.id, p]));
 
-      // Validación de stock disponible
+      // Validar disponible
       for (const it of dto.items) {
         const p = byId.get(it.productId);
         if (!p) throw new BadRequestException(`Producto inválido: ${it.productId}`);
@@ -123,7 +119,6 @@ export class OrdersService {
           throw new BadRequestException(`Stock insuficiente para ${p.name} (disp: ${available})`);
         }
       }
-
       // Reservar
       for (const it of dto.items) {
         const p = byId.get(it.productId)!;
@@ -137,7 +132,6 @@ export class OrdersService {
         status: 'pending',
         customer: customer || undefined,
         total: 0,
-        code,
       });
       const saved = await manager.save(order);
 
@@ -145,7 +139,7 @@ export class OrdersService {
         const p = byId.get(it.productId)!;
         const unitPrice = it.unitPrice ?? Number(p.price || 0);
         const discount = Number(it.discount || 0);
-        const lineTotal = unitPrice * Number(it.quantity) - discount;
+        const lineTotal = (unitPrice * Number(it.quantity)) - discount;
         total += lineTotal;
 
         const item = manager.create(OrderItem, {
@@ -161,6 +155,7 @@ export class OrdersService {
       }
 
       saved.total = total;
+      // código PEDxxx se asigna vía trigger o en base.entity/BeforeInsert si ya lo tenés
       return manager.save(saved);
     });
   }
@@ -195,7 +190,9 @@ export class OrdersService {
         const p = byId.get(it.productId)!;
         const r = Number(p.reserved || 0) - Number(it.quantity || 0);
         const s = Number(p.stock || 0) - Number(it.quantity || 0);
-        if (r < 0 || s < 0) throw new BadRequestException(`Inconsistencia de stock en ${p.name}`);
+        if (r < 0 || s < 0) {
+          throw new BadRequestException(`Inconsistencia de stock en ${p.name}`);
+        }
         p.reserved = r;
         p.stock = s;
       }
@@ -242,7 +239,7 @@ export class OrdersService {
     if (order.status === 'confirmed') {
       throw new BadRequestException('No se puede eliminar un pedido confirmado');
     }
-    await this.cancel(id);
+    await this.cancel(id); // libera reservas si quedaran
     await this.items.delete({ orderId: id });
     await this.orders.delete(id);
   }
