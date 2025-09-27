@@ -1,30 +1,45 @@
-
-import { Controller, Get, Post, Body, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body } from '@nestjs/common';
 import { CashService } from './cash.service';
-import { CloseCashDto, MovementDto, OpenCashDto } from './dto';
+
+type MovementKind = 'income' | 'expense' | 'sale';
 
 @Controller('cash')
 export class CashController {
-  constructor(private readonly service: CashService) {}
+  constructor(private readonly cashService: CashService) {}
 
   @Get('current')
-  current() { return this.service.currentReport(); }
-
-  @Post('open')
-  open(@Body() dto: OpenCashDto) { return this.service.open(dto.openingAmount); }
-
-  @Post('close')
-  close(@Body() dto: CloseCashDto) { return this.service.close(dto.closingAmount); }
-
-  @Post('movement')
-  movement(@Body() dto: MovementDto) {
-    const when = dto.createdAt ? new Date(dto.createdAt) : undefined;
-    return this.service.movement(dto.amount, dto.type, dto.description, when);
+  getCurrent() {
+    // ahora incluye { isOpen }
+    return this.cashService.getCurrent();
   }
 
-  @Get('report')
-  report(@Query('date') date: string) { return this.service.report(date); }
-
   @Get('movements')
-  movements(@Query('date') date?: string) { return this.service.getMovements(date); }
+  getMovements() {
+    return this.cashService.getMovements();
+  }
+
+  @Post('open')
+  open(@Body() body: { amount: number }) {
+    return this.cashService.open(body.amount);
+  }
+
+  @Post('close')
+  close(@Body() body: { amount: number }) {
+    return this.cashService.close(body.amount);
+  }
+
+  @Post('movement')
+  movement(
+    @Body()
+    body: { amount: number; type: MovementKind; description: string },
+  ) {
+    return this.cashService.movement(body);
+  }
+
+  // opcional, lo dejamos por si querés consultarlo directo
+  @Get('status')
+  async status() {
+    const isOpen = await this.cashService.isOpen();
+    return { isOpen };
+  }
 }
