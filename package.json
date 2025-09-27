@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node dist/main.js",
     "start:dev": "npm run db:init && nest start --watch",
+    "smoke": "ts-node -r tsconfig-paths/register -r dotenv/config scripts/smoke-e2e.ts",
     "build": "nest build",
     "db:init": "ts-node -r tsconfig-paths/register -r dotenv/config src/db/ensure-database.ts",
     "seed": "ts-node -r tsconfig-paths/register -r dotenv/config src/seeds/seed.ts",
