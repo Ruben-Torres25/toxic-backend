@@ -1,7 +1,6 @@
-import { Controller, Get, Post, Body } from '@nestjs/common';
+import { Body, Controller, Get, Post } from '@nestjs/common';
 import { CashService } from './cash.service';
-
-type MovementKind = 'income' | 'expense' | 'sale';
+import { MovementKind } from './cash.entity';
 
 @Controller('cash')
 export class CashController {
@@ -9,7 +8,6 @@ export class CashController {
 
   @Get('current')
   getCurrent() {
-    // ahora incluye { isOpen }
     return this.cashService.getCurrent();
   }
 
@@ -20,26 +18,25 @@ export class CashController {
 
   @Post('open')
   open(@Body() body: { amount: number }) {
-    return this.cashService.open(body.amount);
+    return this.cashService.open(Number(body?.amount || 0));
   }
 
   @Post('close')
   close(@Body() body: { amount: number }) {
-    return this.cashService.close(body.amount);
+    return this.cashService.close(Number(body?.amount || 0));
   }
 
   @Post('movement')
-  movement(
-    @Body()
-    body: { amount: number; type: MovementKind; description: string },
-  ) {
-    return this.cashService.movement(body);
+  movement(@Body() body: { amount: number; type: MovementKind; description: string }) {
+    return this.cashService.movement({
+      amount: Number(body?.amount),
+      type: body?.type,
+      description: body?.description ?? '',
+    });
   }
 
-  // opcional, lo dejamos por si querés consultarlo directo
   @Get('status')
   async status() {
-    const isOpen = await this.cashService.isOpen();
-    return { isOpen };
+    return { isOpen: await this.cashService.isOpen() };
   }
 }

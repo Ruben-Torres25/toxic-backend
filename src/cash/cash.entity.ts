@@ -1,35 +1,61 @@
-import { Column, Entity, ManyToOne } from 'typeorm';
-import { BaseEntity } from '../common/base.entity';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 
 @Entity('cash_sessions')
-export class CashSession extends BaseEntity {
-  @Column({ unique: true })
-  date!: string; // YYYY-MM-DD
+export class CashSession {
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
 
-  @Column('real', { default: 0 })
+  // Si tu tabla tiene una columna DATE real, este campo puede ser 'date' (type: 'date')
+  @Column({ type: 'date', nullable: true })
+  date!: Date | null;
+
+  @CreateDateColumn({ name: 'created_at', type: 'timestamp with time zone' })
+  createdAt!: Date;
+
+  @UpdateDateColumn({ name: 'updated_at', type: 'timestamp with time zone' })
+  updatedAt!: Date;
+
+  @Column({ name: 'opening_amount', type: 'numeric', default: 0 })
   openingAmount!: number;
 
-  @Column('real', { default: 0 })
+  @Column({ name: 'closing_amount', type: 'numeric', default: 0 })
   closingAmount!: number;
 
-  @Column({ default: true })
+  @Column({ name: 'is_open', type: 'boolean', default: false })
   isOpen!: boolean;
 }
 
+export type MovementKind = 'income' | 'expense' | 'sale';
+
 @Entity('cash_movements')
-export class CashMovement extends BaseEntity {
-  @Column()
-  sessionId!: string;
+export class CashMovement {
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
 
-  @Column('real')
-  amount!: number; // positive for income/sale, negative for expense
+  @CreateDateColumn({ name: 'created_at', type: 'timestamp with time zone' })
+  createdAt!: Date;
 
-  @Column()
-  type!: 'income' | 'expense' | 'sale';
+  @UpdateDateColumn({ name: 'updated_at', type: 'timestamp with time zone' })
+  updatedAt!: Date;
 
-  @Column()
+  // IMPORTANTE: default:0 y NOT NULL en DB (ya lo dejaste así)
+  @Column({ type: 'numeric', default: 0 })
+  amount!: number;
+
+  @Column({ type: 'varchar', length: 32 })
+  type!: MovementKind;
+
+  @Column({ type: 'text', default: '' })
   description!: string;
 
-  @Column({ type: 'timestamptz' })
-  occurredAt!: Date;
+  @Column({ name: 'occurred_at', type: 'timestamp with time zone', nullable: true })
+  occurredAt!: Date | null;
+
+  // Relación a la sesión (session_id uuid NOT NULL con FK)
+  @Column({ name: 'session_id', type: 'uuid' })
+  sessionId!: string;
+
+  @ManyToOne(() => CashSession, { eager: false, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'session_id' })
+  session!: CashSession;
 }
