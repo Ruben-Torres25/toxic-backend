@@ -1,25 +1,61 @@
-import { IsEmail, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsNumber, IsOptional, IsString, Matches } from 'class-validator';
+
+const ONLY_DIGITS = /^[0-9]+$/;
 
 export class CreateCustomerDto {
   @IsString() @IsNotEmpty()
   name!: string;
 
-  @IsOptional() @IsString()
+  @IsOptional() @Matches(ONLY_DIGITS, { message: 'phone debe contener solo números' })
+  @IsString()
   phone?: string;
+
+  // NUEVO
+  @IsOptional() @Matches(ONLY_DIGITS, { message: 'phone2 debe contener solo números' })
+  @IsString()
+  phone2?: string;
 
   @IsOptional() @IsEmail()
   email?: string;
+
+  @IsOptional() @IsString()
+  address?: string;
+
+  // NUEVO
+  @IsOptional() @Matches(ONLY_DIGITS, { message: 'postalCode debe contener solo números' })
+  @IsString()
+  postalCode?: string;
+
+  @IsOptional() @IsString()
+  notes?: string;
 }
 
 export class UpdateCustomerDto {
   @IsOptional() @IsString()
   name?: string;
 
-  @IsOptional() @IsString()
+  @IsOptional() @Matches(ONLY_DIGITS, { message: 'phone debe contener solo números' })
+  @IsString()
   phone?: string;
+
+  // NUEVO
+  @IsOptional() @Matches(ONLY_DIGITS, { message: 'phone2 debe contener solo números' })
+  @IsString()
+  phone2?: string;
 
   @IsOptional() @IsEmail()
   email?: string;
+
+  @IsOptional() @IsString()
+  address?: string;
+
+  // NUEVO
+  @IsOptional() @Matches(ONLY_DIGITS, { message: 'postalCode debe contener solo números' })
+  @IsString()
+  postalCode?: string;
+
+  @IsOptional() @IsString()
+  notes?: string;
 
   @IsOptional() @IsNumber()
   balance?: number;
@@ -29,6 +65,6 @@ export class AdjustBalanceDto {
   @IsNumber()
   amount!: number;
 
-  @IsString()
-  reason!: string;
+  @IsOptional() @IsString()
+  reason?: string;
 }
