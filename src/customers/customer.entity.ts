@@ -1,6 +1,6 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, OneToMany } from 'typeorm';
 import { BaseEntity } from '../common/base.entity';
-
+import { CustomerMovement } from './customer-movement.entity';
 
 @Entity('customers')
 export class Customer extends BaseEntity {
@@ -10,9 +10,8 @@ export class Customer extends BaseEntity {
   @Column({ nullable: true })
   phone?: string;     // teléfono principal
 
-  // NUEVO: segundo teléfono
   @Column({ nullable: true })
-  phone2?: string;
+  phone2?: string;    // segundo teléfono
 
   @Column({ nullable: true })
   email?: string;
@@ -20,7 +19,6 @@ export class Customer extends BaseEntity {
   @Column({ nullable: true })
   address?: string;
 
-  // NUEVO: código postal
   @Column({ nullable: true })
   postalCode?: string;
 
@@ -29,4 +27,7 @@ export class Customer extends BaseEntity {
 
   @Column('real', { default: 0 })
   balance!: number;
+
+  @OneToMany(() => CustomerMovement, (m) => m.customer)
+  movements!: CustomerMovement[];
 }

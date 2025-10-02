@@ -1,5 +1,4 @@
-
-import { Controller, Get, Param, Post, Body, Patch, Delete } from '@nestjs/common';
+import { Controller, Get, Param, Post, Body, Patch, Delete, HttpCode } from '@nestjs/common';
 import { CustomersService } from './customers.service';
 import { CreateCustomerDto, UpdateCustomerDto, AdjustBalanceDto } from './dto';
 
@@ -8,13 +7,19 @@ export class CustomersController {
   constructor(private readonly service: CustomersService) {}
 
   @Get()
-  list() { return this.service.findAll(); }
+  list() {
+    return this.service.findAll();
+  }
 
   @Get(':id')
-  get(@Param('id') id: string) { return this.service.findOne(id); }
+  get(@Param('id') id: string) {
+    return this.service.findOne(id);
+  }
 
   @Post()
-  create(@Body() dto: CreateCustomerDto) { return this.service.create(dto); }
+  create(@Body() dto: CreateCustomerDto) {
+    return this.service.create(dto);
+  }
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateCustomerDto) {
@@ -29,9 +34,17 @@ export class CustomersController {
 
   @Post(':id/adjust')
   adjust(@Param('id') id: string, @Body() dto: AdjustBalanceDto) {
-    return this.service.adjust(id, dto.amount);
+    return this.service.adjust(id, dto.amount, dto.reason);
+  }
+
+  @Get(':id/movements')
+  movements(@Param('id') id: string) {
+    return this.service.listMovements(id);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) { return this.service.remove(id); }
+  @HttpCode(204) // ✅ No Content
+  async remove(@Param('id') id: string): Promise<void> {
+    await this.service.remove(id);
+  }
 }
