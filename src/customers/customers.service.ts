@@ -4,12 +4,14 @@ import { Repository } from 'typeorm';
 import { Customer } from './customer.entity';
 import { CustomerMovement, MovementType } from './customer-movement.entity';
 import { CreateCustomerDto, UpdateCustomerDto } from './dto';
+import { Order } from '../orders/order.entity'; // IMPORT RELATIVO
 
 @Injectable()
 export class CustomersService {
   constructor(
     @InjectRepository(Customer) private readonly repo: Repository<Customer>,
     @InjectRepository(CustomerMovement) private readonly movRepo: Repository<CustomerMovement>,
+    @InjectRepository(Order) private readonly orderRepo: Repository<Order>,
   ) {}
 
   findAll() {
@@ -36,14 +38,11 @@ export class CustomersService {
   async remove(id: string) {
     // 404 si no existe
     await this.findOne(id);
-
-    // 1) Eliminar dependencias (por si la FK de la tabla no tiene CASCADE)
+    // borrar dependencias si la FK no tiene cascade
     await this.movRepo.delete({ customer: { id } } as any);
-
-    // 2) Eliminar cliente
+    // (opcional) si Orders no tiene cascade y querés borrarlos:
+    // await this.orderRepo.delete({ customer: { id } } as any);
     await this.repo.delete(id);
-
-    // devolver void -> el controller responde 204
   }
 
   // amount: +pago, -deuda, 0=ajuste
@@ -76,4 +75,33 @@ export class CustomersService {
       order: { createdAt: 'DESC' },
     });
   }
+
+  // === Stats de pedidos por cliente ===
+  // === Stats de pedidos por cliente ===
+async stats(id: string) {
+  await this.findOne(id);
+
+  // COUNT(*)
+  const raw = await this.orderRepo
+    .createQueryBuilder('o')
+    .where('o.customer_id = :id', { id })
+    .select('COUNT(*)', 'cnt')
+    .getRawOne<{ cnt: string }>(); // <- puede ser undefined
+
+  const orderCount = Number(raw?.cnt ?? 0);
+
+  // Último pedido por fecha de creación
+  const last = await this.orderRepo
+    .createQueryBuilder('o')
+    .where('o.customer_id = :id', { id })
+    .orderBy('o.createdAt', 'DESC')
+    .select(['o.id', 'o.createdAt'])
+    .getOne();
+
+  return {
+    orderCount,
+    lastOrderDate: last?.createdAt ?? null,
+  };
+}
+
 }

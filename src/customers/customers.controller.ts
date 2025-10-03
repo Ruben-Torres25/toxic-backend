@@ -42,8 +42,14 @@ export class CustomersController {
     return this.service.listMovements(id);
   }
 
+  // NUEVO: stats
+  @Get(':id/stats')
+  stats(@Param('id') id: string) {
+    return this.service.stats(id);
+  }
+
   @Delete(':id')
-  @HttpCode(204) // ✅ No Content
+  @HttpCode(204)
   async remove(@Param('id') id: string): Promise<void> {
     await this.service.remove(id);
   }
