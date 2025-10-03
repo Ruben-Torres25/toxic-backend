@@ -6,7 +6,6 @@ import { CreateProductDto, UpdateProductDto, UpdateStockDto } from './dto';
 export class ProductsController {
   constructor(private readonly service: ProductsService) {}
 
-  // Búsqueda tipo Aspen (con paginado y filtros)
   @Get()
   search(
     @Query('q') q?: string,
@@ -14,6 +13,8 @@ export class ProductsController {
     @Query('sku') sku?: string,
     @Query('category') category?: string,
     @Query('barcode') barcode?: string,
+    @Query('codeLetters') codeLetters?: string, // 🔤
+    @Query('codeDigits') codeDigits?: string,   // #️⃣
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('sortBy') sortBy?: string,
@@ -21,18 +22,13 @@ export class ProductsController {
   ) {
     const params: ProductSearchParams = {
       q, name, sku, category, barcode,
+      codeLetters, codeDigits,
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       sortBy: sortBy as any,
       sortDir: sortDir as any,
     };
     return this.service.search(params);
-  }
-
-  // Categorías únicas (para el desplegable)
-  @Get('categories')
-  categories() {
-    return this.service.listCategories();
   }
 
   @Get(':id')

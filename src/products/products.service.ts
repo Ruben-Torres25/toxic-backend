@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, SelectQueryBuilder } from 'typeorm';
+import { Repository, Brackets } from 'typeorm';
 import { Product } from './product.entity';
 import { CreateProductDto, UpdateProductDto } from './dto';
 
@@ -8,13 +8,18 @@ type SortBy = 'name' | 'sku' | 'price' | 'stock' | 'createdAt';
 type SortDir = 'asc' | 'desc';
 
 export type ProductSearchParams = {
-  q?: string;          // busca en name, sku, category, barcode
+  q?: string;
   name?: string;
   sku?: string;
   category?: string;
   barcode?: string;
-  page?: number;       // 1..N
-  limit?: number;      // 5..100
+
+  // 🔤 + #️⃣
+  codeLetters?: string;
+  codeDigits?: string;
+
+  page?: number;
+  limit?: number;
   sortBy?: SortBy;
   sortDir?: SortDir;
 };
@@ -23,25 +28,22 @@ export type ProductSearchParams = {
 export class ProductsService {
   constructor(@InjectRepository(Product) private repo: Repository<Product>) {}
 
-  // ---------- BÚSQUEDA con filtros + paginado ----------
   async search(params: ProductSearchParams) {
     const {
       q, name, sku, category, barcode,
-      page = 1,
-      limit = 20,
-      sortBy = 'name',
-      sortDir = 'asc',
+      codeLetters, codeDigits,
+      page = 1, limit = 20, sortBy = 'name', sortDir = 'asc',
     } = params;
 
     const qb = this.repo.createQueryBuilder('p');
 
-    // Filtros específicos
+    // filtros directos
     if (name)      qb.andWhere('p.name ILIKE :name',       { name: `%${name}%` });
     if (sku)       qb.andWhere('p.sku ILIKE :sku',         { sku: `%${sku}%` });
     if (category)  qb.andWhere('p.category ILIKE :cat',    { cat: `%${category}%` });
     if (barcode)   qb.andWhere('p.barcode ILIKE :barcode', { barcode: `%${barcode}%` });
 
-    // Búsqueda libre (multi-campo)
+    // 🔎 búsqueda libre
     if (q) {
       qb.andWhere(
         `(p.name ILIKE :q OR p.sku ILIKE :q OR p.category ILIKE :q OR p.barcode ILIKE :q)`,
@@ -49,13 +51,39 @@ export class ProductsService {
       );
     }
 
-    // Orden seguro
+    // 🧠 lógica letras/números
+    const L = codeLetters?.trim();
+    const D = codeDigits?.trim();
+
+    if (L && D) {
+      // SKU que contenga letras y luego (no necesariamente adyacente) números: regex case-insensitive
+      // Ej: ABC-001, AB001, A_B.C123 → ^.*ABC.*[0-9]*123.*$
+      // Usamos ~* para ignorar mayúsculas/minúsculas
+      const regex = `^.*${escapeRegex(L)}.*${escapeDigitsRegex(D)}.*$`;
+
+      qb.andWhere(new Brackets((w) => {
+        w.where('p.sku ~* :rx', { rx: regex })           // SKU con patrón letras…dígitos
+         .orWhere('p.barcode ILIKE :dcont', { dcont: `%${D}%` }); // o barcode contiene dígitos
+      }));
+    } else if (L) {
+      qb.andWhere(new Brackets((w) => {
+        w.where('p.sku ILIKE :lstart', { lstart: `${L}%` })
+         .orWhere('p.sku ILIKE :lcont', { lcont: `%${L}%` });
+      }));
+    } else if (D) {
+      qb.andWhere(new Brackets((w) => {
+        w.where('p.barcode ILIKE :dcont', { dcont: `%${D}%` })
+         .orWhere('p.sku ILIKE :dcontSku', { dcontSku: `%${D}%` }); // por si SKU incluye números
+      }));
+    }
+
+    // Orden
     const safeSortBy: SortBy = (['name','sku','price','stock','createdAt'] as const)
       .includes(sortBy) ? sortBy : 'name';
     const safeSortDir: 'ASC' | 'DESC' = sortDir?.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
     qb.orderBy(`p.${safeSortBy}`, safeSortDir);
 
-    // Paginación segura
+    // Paginación
     const take = Math.min(Math.max(Number(limit) || 20, 5), 100);
     const skip = Math.max((Number(page) || 1) - 1, 0) * take;
 
@@ -76,19 +104,6 @@ export class ProductsService {
     };
   }
 
-  // ---------- Categorías únicas (para el dropdown) ----------
-  async listCategories(): Promise<string[]> {
-    const qb = this.repo.createQueryBuilder('p')
-      .select('DISTINCT p.category', 'category')
-      .where('p.category IS NOT NULL')
-      .andWhere("TRIM(p.category) <> ''")
-      .orderBy('p.category', 'ASC');
-
-    const rows = await qb.getRawMany<{ category: string }>();
-    return rows.map(r => r.category);
-  }
-
-  // ---------- Listado simple (retro-compat) ----------
   async findAll() {
     const list = await this.repo.find();
     return list.map((p) => ({
@@ -130,7 +145,6 @@ export class ProductsService {
     await this.repo.delete(id);
   }
 
-  /** Ajuste de stock físico (no toca 'reserved'). */
   async adjustStock(id: string, quantity: number) {
     const p = await this.repo.findOne({ where: { id } });
     if (!p) throw new NotFoundException('Producto no encontrado');
@@ -141,4 +155,13 @@ export class ProductsService {
       available: Math.max(0, Number(saved.stock || 0) - Number(saved.reserved || 0)),
     };
   }
+}
+
+// --- helpers ---
+function escapeRegex(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+function escapeDigitsRegex(d: string) {
+  // sólo dígitos; por si acaso escapamos
+  return d.replace(/[^0-9]/g, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
