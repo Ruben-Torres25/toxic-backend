@@ -1,15 +1,38 @@
-
-import { Controller, Get, Param, Post, Body, Patch, Delete } from '@nestjs/common';
-import { ProductsService } from './products.service';
+import { Controller, Get, Param, Post, Body, Patch, Delete, Query } from '@nestjs/common';
+import { ProductsService, ProductSearchParams } from './products.service';
 import { CreateProductDto, UpdateProductDto, UpdateStockDto } from './dto';
 
 @Controller('products')
 export class ProductsController {
   constructor(private readonly service: ProductsService) {}
 
+  // Búsqueda tipo Aspen (con paginado y filtros)
   @Get()
-  list() {
-    return this.service.findAll();
+  search(
+    @Query('q') q?: string,
+    @Query('name') name?: string,
+    @Query('sku') sku?: string,
+    @Query('category') category?: string,
+    @Query('barcode') barcode?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortDir') sortDir?: string,
+  ) {
+    const params: ProductSearchParams = {
+      q, name, sku, category, barcode,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      sortBy: sortBy as any,
+      sortDir: sortDir as any,
+    };
+    return this.service.search(params);
+  }
+
+  // Categorías únicas (para el desplegable)
+  @Get('categories')
+  categories() {
+    return this.service.listCategories();
   }
 
   @Get(':id')

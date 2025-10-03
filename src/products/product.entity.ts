@@ -20,6 +20,13 @@ export class Product extends BaseEntity {
   @Column('integer', { default: 0 })
   reserved!: number;
 
+  // 🔎 Campos para búsqueda
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  category?: string | null;
+
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  barcode?: string | null;
+
   // Conveniencia para lecturas (no se persiste)
   get available() {
     const s = Number(this.stock || 0);
