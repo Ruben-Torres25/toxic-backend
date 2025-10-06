@@ -10,6 +10,7 @@ import { OrdersModule } from './orders/orders.module';
 import { CashModule } from './cash/cash.module';
 import { ReportsModule } from './reports/reports.module';
 import { DatabaseBootstrapService } from './db/database-bootstrap.service';
+import { CreditNotesModule } from './credit-notes/credit-notes.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { DatabaseBootstrapService } from './db/database-bootstrap.service';
     OrdersModule,
     CashModule,
     ReportsModule,
+    CreditNotesModule,
   ],
   providers: [DatabaseBootstrapService],
 })
