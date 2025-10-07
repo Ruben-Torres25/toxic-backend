@@ -1,5 +1,6 @@
-// src/credit-notes/dto.ts
-import { IsArray, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, ValidateNested } from 'class-validator';
+import {
+  IsArray, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreditNoteItemDto {
@@ -9,18 +10,18 @@ export class CreditNoteItemDto {
   @IsOptional() @IsString()
   description?: string;
 
-  // precios SIN IVA (como estás usando en orders)
+  // Precio SIN IVA
   @IsNumber()
   unitPrice!: number;
 
   @IsNumber()
   quantity!: number;
 
-  // monto absoluto en $ sobre la base sin IVA (misma semántica que OrderItemDto.discount)
+  // Monto absoluto de descuento ($) sobre base sin IVA
   @IsNumber()
   discount!: number;
 
-  // opcional (default 0.21)
+  // Alícuota opcional (por defecto 0.21)
   @IsOptional() @IsNumber()
   taxRate?: number;
 }
@@ -38,7 +39,7 @@ export class CreateCreditNoteDto {
   @IsOptional() @IsString()
   reason?: string;
 
-  @IsIn(['cash','credit'])
+  @IsIn(['cash', 'credit'])
   refundMethod!: 'cash' | 'credit';
 
   @IsArray()
@@ -47,11 +48,10 @@ export class CreateCreditNoteDto {
   items!: CreditNoteItemDto[];
 }
 
-// Respuesta que el front espera
 export type CreditNoteDTO = {
   id: string;
   number?: string | null;
-  subtotal: number; // sin IVA (negativo a nivel contable)
+  subtotal: number; // sin IVA (negativo)
   iva: number;      // negativo
   total: number;    // con IVA (negativo)
   status: 'created' | 'authorized' | 'canceled';

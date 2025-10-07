@@ -4,18 +4,25 @@ import { BaseEntity } from '../common/base.entity';
 import { Customer } from '../customers/customer.entity';
 import { Product } from '../products/product.entity';
 
+export type OrderStatus =
+  | 'pending'
+  | 'confirmed'
+  | 'canceled'
+  | 'partially_returned' // 👈 NUEVOS estados
+  | 'returned';
+
 @Entity('orders')
 export class Order extends BaseEntity {
   @Column({ type: 'varchar', length: 16, unique: true, nullable: true })
   code!: string | null;
 
+  // ← ampliamos el tipo para que el update del service sea válido
   @Column({ type: 'varchar', default: 'pending' })
-  status!: 'pending' | 'confirmed' | 'canceled';
+  status!: OrderStatus;
 
   @Column('real', { default: 0 })
   total!: number;
 
-  // NUEVO: notas opcionales del pedido
   @Column({ type: 'text', nullable: true })
   notes?: string | null;
 
@@ -44,10 +51,10 @@ export class OrderItem extends BaseEntity {
   product?: Product;
 
   @Column()
-  productName!: string;   // se persiste como product_name por SnakeNamingStrategy
+  productName!: string;   // product_name
 
   @Column('real')
-  unitPrice!: number;     // unit_price
+  unitPrice!: number;     // unit_price (SIN IVA)
 
   @Column('integer')
   quantity!: number;
@@ -57,4 +64,8 @@ export class OrderItem extends BaseEntity {
 
   @Column('real')
   lineTotal!: number;     // line_total
+
+  // 👇 NUEVO: para que el service pueda sumar devoluciones
+  @Column('integer', { default: 0 })
+  returnedQty!: number;   // returned_qty
 }

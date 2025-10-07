@@ -1,9 +1,8 @@
-// src/credit-notes/credit-notes.controller.ts
 import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { CreditNotesService } from './credit-notes.service';
 import { CreateCreditNoteDto } from './dto';
 
-@Controller('credit-notes') // ⇒ /api/credit-notes por tu proxy del Vite
+@Controller('credit-notes') // → /api/credit-notes (según tu proxy/prefix)
 export class CreditNotesController {
   constructor(private readonly service: CreditNotesService) {}
 
