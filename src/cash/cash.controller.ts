@@ -1,42 +1,50 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query } from '@nestjs/common';
 import { CashService } from './cash.service';
-import { MovementKind } from './cash.entity';
 
 @Controller('cash')
 export class CashController {
-  constructor(private readonly cashService: CashService) {}
+  constructor(private readonly cash: CashService) {}
 
   @Get('current')
   getCurrent() {
-    return this.cashService.getCurrent();
+    return this.cash.getCurrent();
   }
 
   @Get('movements')
   getMovements() {
-    return this.cashService.getMovements();
+    return this.cash.getMovements();
+  }
+
+  // 👇 NUEVO: historial últimos N días (default 7)
+  @Get('history')
+  getHistory(@Query('days') days?: string) {
+    const n = days ? Number(days) : 7;
+    return this.cash.getHistory(n);
   }
 
   @Post('open')
   open(@Body() body: { amount: number }) {
-    return this.cashService.open(Number(body?.amount || 0));
+    return this.cash.open(Number(body?.amount ?? 0));
   }
 
   @Post('close')
   close(@Body() body: { amount: number }) {
-    return this.cashService.close(Number(body?.amount || 0));
+    return this.cash.close(Number(body?.amount ?? 0));
   }
 
+  // Movimiento manual (ingreso/egreso)
   @Post('movement')
-  movement(@Body() body: { amount: number; type: MovementKind; description: string }) {
-    return this.cashService.movement({
-      amount: Number(body?.amount),
+  movement(@Body() body: { amount: number; type: 'income' | 'expense' | 'sale'; description?: string; customerId?: string }) {
+    return this.cash.movement({
+      amount: Number(body?.amount ?? 0),
       type: body?.type,
       description: body?.description ?? '',
+      customerId: body?.customerId,
     });
   }
 
   @Get('status')
-  async status() {
-    return { isOpen: await this.cashService.isOpen() };
+  isOpen() {
+    return this.cash.isOpen();
   }
 }

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Brackets } from 'typeorm';
 import { Product } from './product.entity';
@@ -37,13 +37,11 @@ export class ProductsService {
 
     const qb = this.repo.createQueryBuilder('p');
 
-    // filtros directos
     if (name)      qb.andWhere('p.name ILIKE :name',       { name: `%${name}%` });
     if (sku)       qb.andWhere('p.sku ILIKE :sku',         { sku: `%${sku}%` });
     if (category)  qb.andWhere('p.category ILIKE :cat',    { cat: `%${category}%` });
     if (barcode)   qb.andWhere('p.barcode ILIKE :barcode', { barcode: `%${barcode}%` });
 
-    // 🔎 búsqueda libre
     if (q) {
       qb.andWhere(
         `(p.name ILIKE :q OR p.sku ILIKE :q OR p.category ILIKE :q OR p.barcode ILIKE :q)`,
@@ -51,19 +49,14 @@ export class ProductsService {
       );
     }
 
-    // 🧠 lógica letras/números
     const L = codeLetters?.trim();
     const D = codeDigits?.trim();
 
     if (L && D) {
-      // SKU que contenga letras y luego (no necesariamente adyacente) números: regex case-insensitive
-      // Ej: ABC-001, AB001, A_B.C123 → ^.*ABC.*[0-9]*123.*$
-      // Usamos ~* para ignorar mayúsculas/minúsculas
       const regex = `^.*${escapeRegex(L)}.*${escapeDigitsRegex(D)}.*$`;
-
       qb.andWhere(new Brackets((w) => {
-        w.where('p.sku ~* :rx', { rx: regex })           // SKU con patrón letras…dígitos
-         .orWhere('p.barcode ILIKE :dcont', { dcont: `%${D}%` }); // o barcode contiene dígitos
+        w.where('p.sku ~* :rx', { rx: regex })
+         .orWhere('p.barcode ILIKE :dcont', { dcont: `%${D}%` });
       }));
     } else if (L) {
       qb.andWhere(new Brackets((w) => {
@@ -73,17 +66,15 @@ export class ProductsService {
     } else if (D) {
       qb.andWhere(new Brackets((w) => {
         w.where('p.barcode ILIKE :dcont', { dcont: `%${D}%` })
-         .orWhere('p.sku ILIKE :dcontSku', { dcontSku: `%${D}%` }); // por si SKU incluye números
+         .orWhere('p.sku ILIKE :dcontSku', { dcontSku: `%${D}%` });
       }));
     }
 
-    // Orden
     const safeSortBy: SortBy = (['name','sku','price','stock','createdAt'] as const)
       .includes(sortBy) ? sortBy : 'name';
     const safeSortDir: 'ASC' | 'DESC' = sortDir?.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
     qb.orderBy(`p.${safeSortBy}`, safeSortDir);
 
-    // Paginación
     const take = Math.min(Math.max(Number(limit) || 20, 5), 100);
     const skip = Math.max((Number(page) || 1) - 1, 0) * take;
 
@@ -122,23 +113,51 @@ export class ProductsService {
   }
 
   async create(dto: CreateProductDto) {
-    const p = this.repo.create({ ...dto, reserved: 0 });
-    const saved = await this.repo.save(p);
-    return {
-      ...saved,
-      available: Math.max(0, Number(saved.stock || 0) - Number(saved.reserved || 0)),
-    };
+    // 🔹 Si sku viene vacío/null, lo removemos para que aplique el DEFAULT de la DB.
+    const payload: Partial<Product> = { ...dto, reserved: 0 };
+    if (!payload.sku || !String(payload.sku).trim()) {
+      delete (payload as any).sku;
+    }
+
+    try {
+      const entity = this.repo.create(payload as Product);
+      const saved = await this.repo.save(entity);
+      return {
+        ...saved,
+        available: Math.max(0, Number(saved.stock || 0) - Number(saved.reserved || 0)),
+      };
+    } catch (e: any) {
+      // 23505 = unique_violation (por ejemplo, SKU repetido si lo enviaste manualmente)
+      if (e?.code === '23505') {
+        throw new BadRequestException('SKU ya existente');
+      }
+      throw e;
+    }
   }
 
   async update(id: string, dto: UpdateProductDto) {
     const p = await this.repo.findOne({ where: { id } });
     if (!p) throw new NotFoundException('Producto no encontrado');
-    Object.assign(p, dto);
-    const saved = await this.repo.save(p);
-    return {
-      ...saved,
-      available: Math.max(0, Number(saved.stock || 0) - Number(saved.reserved || 0)),
-    };
+
+    // Si mandan sku vacío → lo ignoramos (no pisar con vacío)
+    const patch: Partial<Product> = { ...dto };
+    if (patch.sku != null && !String(patch.sku).trim()) {
+      delete (patch as any).sku;
+    }
+
+    Object.assign(p, patch);
+    try {
+      const saved = await this.repo.save(p);
+      return {
+        ...saved,
+        available: Math.max(0, Number(saved.stock || 0) - Number(saved.reserved || 0)),
+      };
+    } catch (e: any) {
+      if (e?.code === '23505') {
+        throw new BadRequestException('SKU ya existente');
+      }
+      throw e;
+    }
   }
 
   async remove(id: string) {
@@ -162,6 +181,5 @@ function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 function escapeDigitsRegex(d: string) {
-  // sólo dígitos; por si acaso escapamos
   return d.replace(/[^0-9]/g, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

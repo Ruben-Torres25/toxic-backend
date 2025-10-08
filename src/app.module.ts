@@ -11,11 +11,11 @@ import { CashModule } from './cash/cash.module';
 import { ReportsModule } from './reports/reports.module';
 import { DatabaseBootstrapService } from './db/database-bootstrap.service';
 import { CreditNotesModule } from './credit-notes/credit-notes.module';
+import { LedgerModule } from './ledger/ledger.module'; // 👈 NUEVO (opcional)
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (cfg: ConfigService) => ({
@@ -25,14 +25,10 @@ import { CreditNotesModule } from './credit-notes/credit-notes.module';
         username: cfg.get<string>('PG_USER', 'postgres'),
         password: cfg.get<string>('PG_PASSWORD', ''),
         database: cfg.get<string>('PG_DATABASE', 'toxicdb'),
-
         autoLoadEntities: true,
-        synchronize: true, // en prod: false + migraciones
+        synchronize: false,
         namingStrategy: new SnakeNamingStrategy(),
-
-        // Opcionales útiles
-        logging: false, // o ['error', 'warn', 'schema'] si querés ver más
-        // extra: { max: 10 }, // pool size
+        logging: false,
       }),
     }),
 
@@ -42,6 +38,7 @@ import { CreditNotesModule } from './credit-notes/credit-notes.module';
     CashModule,
     ReportsModule,
     CreditNotesModule,
+    LedgerModule, // 👈 opcional, si querés exponer su controller desde raíz
   ],
   providers: [DatabaseBootstrapService],
 })

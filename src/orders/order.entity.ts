@@ -8,15 +8,21 @@ export type OrderStatus =
   | 'pending'
   | 'confirmed'
   | 'canceled'
-  | 'partially_returned' // 👈 NUEVOS estados
+  | 'partially_returned'
   | 'returned';
 
 @Entity('orders')
 export class Order extends BaseEntity {
-  @Column({ type: 'varchar', length: 16, unique: true, nullable: true })
-  code!: string | null;
+  // 🔹 Generado por Postgres: PED### (ver SQL). No lo seteás en services.
+  @Column({
+    type: 'varchar',
+    length: 32,
+    unique: true,
+    nullable: false,
+    default: () => "('PED' || lpad(nextval('order_code_seq')::text, 3, '0'))",
+  })
+  code!: string;
 
-  // ← ampliamos el tipo para que el update del service sea válido
   @Column({ type: 'varchar', default: 'pending' })
   status!: OrderStatus;
 
@@ -65,7 +71,7 @@ export class OrderItem extends BaseEntity {
   @Column('real')
   lineTotal!: number;     // line_total
 
-  // 👇 NUEVO: para que el service pueda sumar devoluciones
+  // Para devoluciones parciales
   @Column('integer', { default: 0 })
   returnedQty!: number;   // returned_qty
 }

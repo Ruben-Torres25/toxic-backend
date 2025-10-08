@@ -1,4 +1,3 @@
-// src/orders/orders.service.ts
 import {
   BadRequestException,
   Injectable,
@@ -11,6 +10,7 @@ import { Customer } from '../customers/customer.entity';
 import { Product } from '../products/product.entity';
 import { CreateOrderDto, UpdateOrderDto } from './dto';
 import { CashService } from '../cash/cash.service';
+import { LedgerService } from '../ledger/ledger.service'; // 👈 NUEVO
 
 type IncludeParam = 'customer' | 'items';
 type SortParam = 'code_asc' | 'code_desc' | 'date_desc' | 'date_asc';
@@ -24,6 +24,7 @@ export class OrdersService {
     @InjectRepository(Customer) private customers: Repository<Customer>,
     @InjectRepository(Product) private products: Repository<Product>,
     private cashService: CashService,
+    private ledger: LedgerService, // 👈 NUEVO
   ) {}
 
   // ---- helpers de query ----
@@ -33,34 +34,19 @@ export class OrdersService {
     return qb;
   }
   private applySort(
-  qb: SelectQueryBuilder<Order>,
-  sort?: 'code_asc' | 'code_desc' | 'date_desc' | 'date_asc',
-) {
-  // Por defecto: fecha DESC
-  if (!sort || sort === 'date_desc') {
-    return qb.orderBy('o.createdAt', 'DESC');
+    qb: SelectQueryBuilder<Order>,
+    sort?: 'code_asc' | 'code_desc' | 'date_desc' | 'date_asc',
+  ) {
+    if (!sort || sort === 'date_desc') return qb.orderBy('o.createdAt', 'DESC');
+    if (sort === 'date_asc') return qb.orderBy('o.createdAt', 'ASC');
+
+    const codeNumExpr = `NULLIF(regexp_replace(COALESCE(o.code, ''), '[^0-9]', '', 'g'), '')::int`;
+    if (sort === 'code_asc') qb.orderBy(codeNumExpr, 'ASC', 'NULLS FIRST');
+    else qb.orderBy(codeNumExpr, 'DESC', 'NULLS LAST');
+
+    qb.addOrderBy('o.createdAt', 'DESC');
+    return qb;
   }
-  if (sort === 'date_asc') {
-    return qb.orderBy('o.createdAt', 'ASC');
-  }
-
-  // Extrae solo dígitos del code → "PED003" => "003" => ::int => 3
-  // Usamos '[^0-9]' para evitar backslashes.
-  const codeNumExpr =
-    `NULLIF(regexp_replace(COALESCE(o.code, ''), '[^0-9]', '', 'g'), '')::int`;
-
-  if (sort === 'code_asc') {
-    qb.orderBy(codeNumExpr, 'ASC', 'NULLS FIRST');
-  } else {
-    qb.orderBy(codeNumExpr, 'DESC', 'NULLS LAST');
-  }
-
-  // Criterio secundario estable
-  qb.addOrderBy('o.createdAt', 'DESC');
-
-  return qb;
-}
-
 
   // ---- list / get ----
   list(include: IncludeParam[] = [], sort?: SortParam) {
@@ -80,9 +66,7 @@ export class OrdersService {
 
   // ---- create ----
   async create(dto: CreateOrderDto) {
-    if (!dto.items?.length) {
-      throw new BadRequestException('El pedido requiere items');
-    }
+    if (!dto.items?.length) throw new BadRequestException('El pedido requiere items');
 
     return this.dataSource.transaction(async (manager) => {
       let customer: Customer | null = null;
@@ -148,7 +132,7 @@ export class OrdersService {
     });
   }
 
-  // ---- update (AHORA guarda items + notas) ----
+  // ---- update ----
   async update(id: string, dto: UpdateOrderDto) {
     return this.dataSource.transaction(async (manager) => {
       const order = await manager.findOne(Order, { where: { id } });
@@ -157,26 +141,18 @@ export class OrdersService {
         throw new BadRequestException('No se puede editar un pedido confirmado/cancelado');
       }
 
-      // cliente
       if (dto.customerId) {
         const c = await manager.findOne(Customer, { where: { id: dto.customerId } });
         if (!c) throw new BadRequestException('Cliente inválido');
         order.customer = c;
       }
-      // estado (opcional)
       if (dto.status) order.status = dto.status;
-      // notas (opcional)
       if (typeof dto.notes === 'string') order.notes = dto.notes;
 
-      // si no vienen items, sólo persistimos cabecera
-      if (!dto.items) {
-        return manager.save(order);
-      }
+      if (!dto.items) return manager.save(order);
 
-      // ---- reemplazo de líneas con control de reservas ----
       const prevItems = await manager.find(OrderItem, { where: { orderId: order.id } });
 
-      // 1) revertir reservas previas
       if (prevItems.length) {
         const prevIds = Array.from(new Set(prevItems.map(i => i.productId)));
         const prevProds = await manager.find(Product, {
@@ -191,7 +167,6 @@ export class OrdersService {
         await manager.save(prevProds);
       }
 
-      // 2) validar y reservar para los nuevos items
       const newIds = Array.from(new Set(dto.items.map(i => i.productId)));
       const newProds = await manager.find(Product, {
         where: { id: In(newIds) },
@@ -213,14 +188,13 @@ export class OrdersService {
       }
       await manager.save(newProds);
 
-      // 3) reemplazar líneas y recalcular total
       await manager.delete(OrderItem, { orderId: order.id });
 
       let newTotal = 0;
       for (const it of dto.items) {
         const p = newMap.get(it.productId)!;
         const unitPrice = Number(it.unitPrice ?? p.price ?? 0);
-        const discount = Number(it.discount ?? 0); // MONTO, viene del front (conversión %→$)
+        const discount = Number(it.discount ?? 0);
         const lineTotal = unitPrice * Number(it.quantity) - discount;
         newTotal += lineTotal;
 
@@ -273,7 +247,19 @@ export class OrdersService {
       return manager.save(order);
     });
 
+    // Caja
     await this.cashService.registerSale(result.total, `Venta pedido ${result.id}`);
+
+    // 👇 Ledger: deuda POSITIVA por el total del pedido
+    await this.ledger.record({
+      customerId: (result as any).customerId ?? null,
+      type: 'order',
+      sourceType: 'order',
+      sourceId: result.id,
+      amount: Math.abs(Number(result.total)),
+      description: `Pedido confirmado ${result.code ?? result.id}`,
+    });
+
     return result;
   }
 
@@ -312,7 +298,7 @@ export class OrdersService {
     if (order.status === 'confirmed') {
       throw new BadRequestException('No se puede eliminar un pedido confirmado');
     }
-    await this.cancel(id); // libera reservas si quedaran
+    await this.cancel(id);
     await this.items.delete({ orderId: id });
     await this.orders.delete(id);
   }
