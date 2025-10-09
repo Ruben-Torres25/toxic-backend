@@ -14,9 +14,8 @@ export type ProductSearchParams = {
   category?: string;
   barcode?: string;
 
-  // 🔤 + #️⃣
-  codeLetters?: string;
-  codeDigits?: string;
+  codeLetters?: string; // LLL
+  codeDigits?: string;  // DDD (o "10" -> 010)
 
   page?: number;
   limit?: number;
@@ -28,12 +27,46 @@ export type ProductSearchParams = {
 export class ProductsService {
   constructor(@InjectRepository(Product) private repo: Repository<Product>) {}
 
+  // ---------- helpers ----------
+  private num(v: any, def = 0): number {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : def;
+  }
+
+  private toTrimUndef(v?: string | null) {
+    if (typeof v !== 'string') return v ?? undefined;
+    const x = v.trim();
+    return x === '' ? undefined : x;
+  }
+
+  private computeAvailable(p: Pick<Product, 'stock' | 'reserved'>) {
+    return Math.max(0, this.num(p.stock) - this.num(p.reserved));
+  }
+
+  private normalizePrefix(input?: string, category?: string, name?: string) {
+    // misma lógica que el trigger: category -> name -> 'PRD'
+    const raw = (input && input.trim()) || (category && category.trim()) || (name && name.trim()) || 'PRD';
+    const onlyLetters = raw.replace(/[^A-Za-z]/g, '').toUpperCase();
+    const pref = (onlyLetters.substring(0, 3) || 'PRD').padEnd(3, 'P'); // si faltan letras, rellena con 'P'
+    return pref;
+  }
+
+  // ---------- search ----------
   async search(params: ProductSearchParams) {
-    const {
+    let {
       q, name, sku, category, barcode,
       codeLetters, codeDigits,
       page = 1, limit = 20, sortBy = 'name', sortDir = 'asc',
     } = params;
+
+    // saneo/trim
+    q = this.toTrimUndef(q);
+    name = this.toTrimUndef(name);
+    sku = this.toTrimUndef(sku);
+    category = this.toTrimUndef(category);
+    barcode = this.toTrimUndef(barcode);
+    codeLetters = this.toTrimUndef(codeLetters)?.toUpperCase();
+    codeDigits = this.toTrimUndef(codeDigits);
 
     const qb = this.repo.createQueryBuilder('p');
 
@@ -49,46 +82,52 @@ export class ProductsService {
       );
     }
 
-    const L = codeLetters?.trim();
-    const D = codeDigits?.trim();
+    // Filtros combinados de código (versión "inteligente" con padding)
+    const Draw = (codeDigits ?? '').replace(/\D+/g, ''); // solo dígitos
+    const Lraw = codeLetters;
 
-    if (L && D) {
-      const regex = `^.*${escapeRegex(L)}.*${escapeDigitsRegex(D)}.*$`;
-      qb.andWhere(new Brackets((w) => {
-        w.where('p.sku ~* :rx', { rx: regex })
-         .orWhere('p.barcode ILIKE :dcont', { dcont: `%${D}%` });
+    if (Lraw && Draw) {
+      const L3 = Lraw.slice(0, 3).toUpperCase();
+      const D3 = Draw.padStart(3, '0').slice(-3); // 3 -> 003, 12 -> 012, 123 -> 123
+      qb.andWhere(new Brackets(w => {
+        w.where('p.sku = :skuexact', { skuexact: `${L3}${D3}` })
+         .orWhere('p.barcode ILIKE :dcont', { dcont: `%${Draw}%` });
       }));
-    } else if (L) {
-      qb.andWhere(new Brackets((w) => {
-        w.where('p.sku ILIKE :lstart', { lstart: `${L}%` })
-         .orWhere('p.sku ILIKE :lcont', { lcont: `%${L}%` });
+    } else if (Lraw) {
+      const L3 = Lraw.slice(0, 3).toUpperCase();
+      qb.andWhere(new Brackets(w => {
+        w.where('p.sku ILIKE :lstart', { lstart: `${L3}%` })
+         .orWhere('p.sku ILIKE :lcont', { lcont: `%${L3}%` });
       }));
-    } else if (D) {
-      qb.andWhere(new Brackets((w) => {
-        w.where('p.barcode ILIKE :dcont', { dcont: `%${D}%` })
-         .orWhere('p.sku ILIKE :dcontSku', { dcontSku: `%${D}%` });
+    } else if (Draw) {
+      qb.andWhere(new Brackets(w => {
+        w.where('p.barcode ILIKE :dcont', { dcont: `%${Draw}%` })
+         .orWhere('p.sku ILIKE :dcontSku', { dcontSku: `%${Draw}%` });
       }));
     }
 
-    const safeSortBy: SortBy = (['name','sku','price','stock','createdAt'] as const)
-      .includes(sortBy) ? sortBy : 'name';
-    const safeSortDir: 'ASC' | 'DESC' = sortDir?.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
-    qb.orderBy(`p.${safeSortBy}`, safeSortDir);
+    const allowedSort: SortBy[] = ['name', 'sku', 'price', 'stock', 'createdAt'];
+    const safeSortBy: SortBy = allowedSort.includes(sortBy) ? sortBy : 'name';
+    const safeSortDir: 'ASC' | 'DESC' = (sortDir?.toUpperCase() === 'DESC') ? 'DESC' : 'ASC';
 
-    const take = Math.min(Math.max(Number(limit) || 20, 5), 100);
-    const skip = Math.max((Number(page) || 1) - 1, 0) * take;
+    // Orden estable secundario para evitar saltos en paginación
+    qb.orderBy(`p.${safeSortBy}`, safeSortDir).addOrderBy('p.id', 'ASC');
+
+    const take = Math.min(Math.max(this.num(limit, 20), 5), 100);
+    const curPage = Math.max(this.num(page, 1), 1);
+    const skip = (curPage - 1) * take;
 
     qb.take(take).skip(skip);
 
     const [rows, total] = await qb.getManyAndCount();
     const items = rows.map((p) => ({
       ...p,
-      available: Math.max(0, Number(p.stock || 0) - Number(p.reserved || 0)),
+      available: this.computeAvailable(p),
     }));
 
     return {
       items,
-      page: Number(page) || 1,
+      page: curPage,
       limit: take,
       total,
       pages: Math.max(1, Math.ceil(total / take)),
@@ -99,7 +138,7 @@ export class ProductsService {
     const list = await this.repo.find();
     return list.map((p) => ({
       ...p,
-      available: Math.max(0, Number(p.stock || 0) - Number(p.reserved || 0)),
+      available: this.computeAvailable(p),
     }));
   }
 
@@ -108,12 +147,12 @@ export class ProductsService {
     if (!p) throw new NotFoundException('Producto no encontrado');
     return {
       ...p,
-      available: Math.max(0, Number(p.stock || 0) - Number(p.reserved || 0)),
+      available: this.computeAvailable(p),
     };
   }
 
   async create(dto: CreateProductDto) {
-    // 🔹 Si sku viene vacío/null, lo removemos para que aplique el DEFAULT de la DB.
+    // Si sku viene vacío/null, lo removemos para que aplique el DEFAULT/trigger
     const payload: Partial<Product> = { ...dto, reserved: 0 };
     if (!payload.sku || !String(payload.sku).trim()) {
       delete (payload as any).sku;
@@ -124,10 +163,9 @@ export class ProductsService {
       const saved = await this.repo.save(entity);
       return {
         ...saved,
-        available: Math.max(0, Number(saved.stock || 0) - Number(saved.reserved || 0)),
+        available: this.computeAvailable(saved),
       };
     } catch (e: any) {
-      // 23505 = unique_violation (por ejemplo, SKU repetido si lo enviaste manualmente)
       if (e?.code === '23505') {
         throw new BadRequestException('SKU ya existente');
       }
@@ -150,7 +188,7 @@ export class ProductsService {
       const saved = await this.repo.save(p);
       return {
         ...saved,
-        available: Math.max(0, Number(saved.stock || 0) - Number(saved.reserved || 0)),
+        available: this.computeAvailable(saved),
       };
     } catch (e: any) {
       if (e?.code === '23505') {
@@ -164,22 +202,61 @@ export class ProductsService {
     await this.repo.delete(id);
   }
 
+  /**
+   * Ajuste de stock atómico con FOR UPDATE para evitar condiciones de carrera.
+   * `quantity` puede ser positivo (ingreso) o negativo (egreso). Nunca deja stock < 0.
+   */
   async adjustStock(id: string, quantity: number) {
-    const p = await this.repo.findOne({ where: { id } });
-    if (!p) throw new NotFoundException('Producto no encontrado');
-    p.stock = Math.max(0, Number(p.stock || 0) + Number(quantity || 0));
-    const saved = await this.repo.save(p);
-    return {
-      ...saved,
-      available: Math.max(0, Number(saved.stock || 0) - Number(saved.reserved || 0)),
-    };
-  }
-}
+    const delta = this.num(quantity, 0);
 
-// --- helpers ---
-function escapeRegex(s: string) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-function escapeDigitsRegex(d: string) {
-  return d.replace(/[^0-9]/g, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return await this.repo.manager.transaction(async (em) => {
+      const p = await em
+        .createQueryBuilder(Product, 'p')
+        .setLock('pessimistic_write')
+        .where('p.id = :id', { id })
+        .getOne();
+
+      if (!p) throw new NotFoundException('Producto no encontrado');
+
+      const newStock = Math.max(0, this.num(p.stock) + delta);
+      p.stock = newStock;
+
+      const saved = await em.save(Product, p);
+      return {
+        ...saved,
+        available: this.computeAvailable(saved),
+      };
+    });
+  }
+
+  // ---------- next SKU preview ----------
+  /**
+   * Calcula el próximo DDD sin incrementar la secuencia:
+   * - GREATEST(last_value de product_sku_seq, MAX(DDD) en products) + 1
+   */
+  async getNextDdd(): Promise<string> {
+    const row = await this.repo.query(`
+      SELECT LPAD(
+        (
+          GREATEST(
+            COALESCE((SELECT last_value FROM product_sku_seq), 0),
+            COALESCE((SELECT MAX(CAST(SUBSTRING(sku FROM 4) AS INT)) FROM public.products WHERE sku ~ '^[A-Z]{3}[0-9]{3}$'), 0)
+          ) + 1
+        )::text,
+        3,
+        '0'
+      ) AS ddd;
+    `);
+    return row?.[0]?.ddd ?? '001';
+  }
+
+  /**
+   * Construye el próximo SKU combinando prefijo (derivado o explícito) + DDD calculado.
+   * NO incrementa la secuencia; es solo un "preview".
+   */
+  async nextSku(opts: { prefix?: string; category?: string; name?: string }) {
+    const prefix = this.normalizePrefix(opts?.prefix, opts?.category, opts?.name);
+    const ddd = await this.getNextDdd();
+    return { prefix, ddd, next: `${prefix}${ddd}` };
+  }
 }

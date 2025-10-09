@@ -13,8 +13,8 @@ export class ProductsController {
     @Query('sku') sku?: string,
     @Query('category') category?: string,
     @Query('barcode') barcode?: string,
-    @Query('codeLetters') codeLetters?: string, // 🔤
-    @Query('codeDigits') codeDigits?: string,   // #️⃣
+    @Query('codeLetters') codeLetters?: string,
+    @Query('codeDigits') codeDigits?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('sortBy') sortBy?: string,
@@ -29,6 +29,15 @@ export class ProductsController {
       sortDir: sortDir as any,
     };
     return this.service.search(params);
+  }
+
+  @Get('next-sku')
+  async nextSku(
+    @Query('prefix') prefix?: string,
+    @Query('category') category?: string,
+    @Query('name') name?: string,
+  ) {
+    return this.service.nextSku({ prefix, category, name });
   }
 
   @Get(':id')
