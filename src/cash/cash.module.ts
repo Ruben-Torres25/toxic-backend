@@ -1,14 +1,16 @@
+// src/cash/cash.module.ts
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { CashMovement, CashSession } from './cash.entity';
-import { CashService } from './cash.service';
 import { CashController } from './cash.controller';
-import { LedgerModule } from '../ledger/ledger.module';
+import { CashService } from './cash.service';
+import { CashMovement, CashSession } from './cash.entity';
+import { Product } from '../products/product.entity';
+import { LedgerService } from '../ledger/ledger.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([CashMovement, CashSession]), LedgerModule],
+  imports: [TypeOrmModule.forFeature([CashMovement, CashSession, Product])],
   controllers: [CashController],
-  providers: [CashService],
-  exports: [CashService], // 👈 necesario para injectarlo en CreditNotesService
+  providers: [CashService, LedgerService],
+  exports: [CashService],
 })
 export class CashModule {}

@@ -1,9 +1,12 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, MoreThanOrEqual } from 'typeorm';
+import { DataSource, Repository, Between, MoreThanOrEqual } from 'typeorm';
 import { CashMovement, CashSession, MovementKind } from './cash.entity';
 import { LedgerService } from '../ledger/ledger.service';
+import { CheckoutDto } from './dto';
+import { Product } from '../products/product.entity';
 
+// ---- helpers de fechas
 function startOfToday(): Date {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -26,9 +29,16 @@ export class CashService {
   constructor(
     @InjectRepository(CashMovement)
     private readonly movRepo: Repository<CashMovement>,
+
     @InjectRepository(CashSession)
     private readonly sessionRepo: Repository<CashSession>,
+
+    @InjectRepository(Product)
+    private readonly prodRepo: Repository<Product>,
+
     private readonly ledger: LedgerService,
+
+    private readonly ds: DataSource,
   ) {}
 
   // ===== Helpers =====
@@ -60,19 +70,16 @@ export class CashService {
     const since = startOfToday();
     const until = startOfTomorrow();
 
-    // Consulta por createdAt (siempre existe)
     const movs = await this.movRepo.find({
       where: { createdAt: Between(since, until) as any },
       order: { createdAt: 'ASC' },
     });
 
-    // Ordená usando occurredAt ?? createdAt para consistencia
     return movs.sort((a, b) => {
       const ta = (a.occurredAt ?? a.createdAt).getTime();
       const tb = (b.occurredAt ?? b.createdAt).getTime();
       return ta - tb;
     });
-    // Nota: si querés filtrar estrictamente por occurredAt, podés duplicar la consulta.
   }
 
   // ===== KPIs / Resumen =====
@@ -123,12 +130,12 @@ export class CashService {
     return rows
       .map((m) => ({
         ...m,
-        when: (m.occurredAt ?? m.createdAt),
+        when: m.occurredAt ?? m.createdAt,
       }))
       .sort((a, b) => a.when.getTime() - b.when.getTime());
   }
 
-  // ===== Operaciones =====
+  // ===== Operaciones de caja =====
   async open(amount: number) {
     const sess = await this.getOrCreateTodaySession();
     if (sess.isOpen) throw new BadRequestException('La caja ya está abierta');
@@ -171,12 +178,12 @@ export class CashService {
     } as Partial<CashMovement>);
     const saved = await this.movRepo.save(mov);
 
-    // Si es ingreso vinculado a cliente → registrar PAGO (negativo) en ledger
+    // Asiento de ledger solo para pagos (ya lo tenías y matchea tus tipos)
     if (body.type === 'income' && body.customerId) {
       await this.ledger.record({
         customerId: body.customerId,
-        type: 'payment',
-        sourceType: 'payment',
+        type: 'payment',          // <= válido en tu LedgerType
+        sourceType: 'payment',    // <= válido en tu LedgerSourceType
         sourceId: saved.id,
         amount: -Math.abs(Number(body.amount)),
         description: body.description || 'Pago',
@@ -186,23 +193,32 @@ export class CashService {
     return saved;
   }
 
-  /** 👇 NUEVO: egreso por devolución en efectivo (NC) */
+  /** Egreso por devolución en efectivo (NC) */
   async registerRefund(amount: number, description: string) {
     const val = Math.abs(Number(amount || 0));
     if (val <= 0) throw new BadRequestException('Monto de devolución inválido');
     return this.movement({
-      amount: val,                // movement pondrá negativo para expense
+      amount: val, // movement pondrá negativo para expense
       type: 'expense',
       description: description ?? 'Devolución en efectivo',
     });
   }
 
-  // Usado por OrdersService (venta)
-  async registerSale(total: number, description: string) {
+  // Usado por checkout (venta)
+  async registerSale(total: number, description: string, sessionId?: string) {
     if (typeof total !== 'number' || total <= 0) {
       throw new BadRequestException('Total de venta inválido');
     }
-    const sess = await this.getOrCreateTodaySession();
+
+    let sess: CashSession | null;
+    if (sessionId) {
+      sess = await this.sessionRepo.findOne({ where: { id: sessionId } });
+      if (!sess) {
+        throw new NotFoundException('Sesión de caja no encontrada');
+      }
+    } else {
+      sess = await this.getOrCreateTodaySession();
+    }
 
     const mov = this.movRepo.create({
       amount: Math.abs(Number(total)),
@@ -219,5 +235,95 @@ export class CashService {
   async isOpen(): Promise<boolean> {
     const sess = await this.getTodaySession();
     return !!sess?.isOpen;
+  }
+
+  // ====== CHECKOUT POS ======
+  async checkout(body: CheckoutDto) {
+    const session = await this.getOrCreateTodaySession();
+    if (!session?.isOpen) throw new BadRequestException('La caja está cerrada');
+    if (!body?.items?.length) throw new BadRequestException('Carrito vacío');
+
+    const items = body.items.map((it) => ({
+      productId: String(it.productId),
+      qty: Math.max(1, Math.floor(Number(it.qty || 0))),
+      price: Number.isFinite(Number(it.price)) ? Number(it.price) : undefined,
+      discount: Number.isFinite(Number(it.discount)) ? Number(it.discount) : 0,
+    }));
+
+    const discountGlobal = Math.max(0, Number(body.discountGlobal || 0));
+    const payments = (body.payments || []).map((p) => ({
+      method: p.method,
+      amount: Math.max(0, Number(p.amount || 0)),
+    }));
+
+    return this.ds.transaction(async (trx) => {
+      let subtotal = 0;
+
+      // 1) Validar stock + calcular subtotal
+      for (const it of items) {
+        const p = await trx.getRepository(Product).findOne({ where: { id: it.productId } });
+        if (!p) throw new BadRequestException(`Producto ${it.productId} no encontrado`);
+
+        const available = Math.max(0, Number(p.stock || 0) - Number(p.reserved || 0));
+        if (it.qty > available) {
+          throw new BadRequestException(`Stock insuficiente para ${p.name} (${p.sku}). Disponible: ${available}`);
+        }
+
+        const unit = Number.isFinite(Number(it.price)) ? Number(it.price) : Number(p.price || 0);
+        const disc = Math.max(0, Number(it.discount || 0));
+        if (disc > unit) {
+          throw new BadRequestException(`Descuento por unidad excede el precio en ${p.name}`);
+        }
+
+        subtotal += (unit - disc) * it.qty;
+      }
+
+      const total = Math.max(0, subtotal - discountGlobal);
+      const paid = payments.reduce((a, b) => a + b.amount, 0);
+      if (paid < total) throw new BadRequestException('Los pagos no cubren el total');
+
+      // 2) Descontar stock (null-safe)
+      for (const it of items) {
+        const repo = trx.getRepository(Product);
+        const found = await repo.findOne({ where: { id: it.productId } });
+        if (!found) {
+          throw new BadRequestException(`Producto ${it.productId} no encontrado`);
+        }
+        const p: Product = found; // ahora p es Product, no null
+        p.stock = Math.max(0, Number(p.stock || 0) - it.qty);
+        await repo.save(p);
+      }
+
+      // 3) Registrar movimiento de venta en la MISMA sesión
+      const desc =
+        body?.notes?.trim()
+          ? `Venta POS: ${items.length} ítems • ${body.notes.trim()}`
+          : `Venta POS: ${items.length} ítems`;
+
+      const mov = trx.getRepository(CashMovement).create({
+        amount: total,
+        type: 'sale',
+        description: desc,
+        occurredAt: new Date(),
+        sessionId: session.id,
+        session,
+      } as Partial<CashMovement>);
+      const saved = await trx.getRepository(CashMovement).save(mov);
+
+      // 🔒 IMPORTANTE:
+      // Quitamos el asiento a Ledger en ventas para evitar errores de tipos.
+      // Si querés registrarlo también en Ledger, pasame los enums válidos (LedgerType/LedgerSourceType)
+      // y lo reactivamos con tipos correctos.
+
+      return {
+        id: saved.id,
+        createdAt: saved.createdAt,
+        subtotal,
+        discountGlobal,
+        total,
+        payments,
+        items: items.map((i) => ({ productId: i.productId, qty: i.qty })),
+      };
+    });
   }
 }

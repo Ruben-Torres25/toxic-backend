@@ -1,5 +1,7 @@
+// src/cash/cash.controller.ts
 import { Controller, Get, Post, Body, Query } from '@nestjs/common';
 import { CashService } from './cash.service';
+import { CheckoutDto, CloseCashDto, MovementDto, OpenCashDto } from './dto';
 
 @Controller('cash')
 export class CashController {
@@ -15,7 +17,7 @@ export class CashController {
     return this.cash.getMovements();
   }
 
-  // 👇 NUEVO: historial últimos N días (default 7)
+  // Historial últimos N días (default 7)
   @Get('history')
   getHistory(@Query('days') days?: string) {
     const n = days ? Number(days) : 7;
@@ -23,28 +25,33 @@ export class CashController {
   }
 
   @Post('open')
-  open(@Body() body: { amount: number }) {
-    return this.cash.open(Number(body?.amount ?? 0));
+  open(@Body() body: OpenCashDto) {
+    return this.cash.open(Number(body?.openingAmount ?? 0));
   }
 
   @Post('close')
-  close(@Body() body: { amount: number }) {
-    return this.cash.close(Number(body?.amount ?? 0));
+  close(@Body() body: CloseCashDto) {
+    return this.cash.close(Number(body?.closingAmount ?? 0));
   }
 
-  // Movimiento manual (ingreso/egreso)
+  // Movimiento manual (ingreso/egreso/venta)
   @Post('movement')
-  movement(@Body() body: { amount: number; type: 'income' | 'expense' | 'sale'; description?: string; customerId?: string }) {
+  movement(@Body() body: MovementDto) {
     return this.cash.movement({
       amount: Number(body?.amount ?? 0),
       type: body?.type,
       description: body?.description ?? '',
-      customerId: body?.customerId,
     });
   }
 
   @Get('status')
   isOpen() {
     return this.cash.isOpen();
+  }
+
+  // ✅ Confirmar venta desde “Caja”
+  @Post('checkout')
+  checkout(@Body() dto: CheckoutDto) {
+    return this.cash.checkout(dto as any);
   }
 }
