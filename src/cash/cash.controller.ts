@@ -1,41 +1,48 @@
-// src/cash/cash.controller.ts
-import { Controller, Get, Post, Body, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { CashService } from './cash.service';
 import { CheckoutDto, CloseCashDto, MovementDto, OpenCashDto } from './dto';
 
-@Controller('cash')
+@Controller()
 export class CashController {
   constructor(private readonly cash: CashService) {}
 
-  @Get('current')
+  // ===== Estado del día =====
+  @Get('cash/current')
   getCurrent() {
     return this.cash.getCurrent();
   }
 
-  @Get('movements')
+  @Get('cash/movements')
   getMovements() {
     return this.cash.getMovements();
   }
 
-  // Historial últimos N días (default 7)
-  @Get('history')
+  // ===== Historial “flat” (lo usa tu front) =====
+  @Get('cash/history')
   getHistory(@Query('days') days?: string) {
-    const n = days ? Number(days) : 7;
+    const n = days ? Number(days) : 30;
     return this.cash.getHistory(n);
   }
 
-  @Post('open')
-  open(@Body() body: OpenCashDto) {
-    return this.cash.open(Number(body?.openingAmount ?? 0));
+  // ===== Historial agrupado por día (nuevo) =====
+  @Get('cash/daily')
+  getDaily(@Query('days') days?: string) {
+    const n = days ? Number(days) : 30;
+    return this.cash.getDaily(n);
   }
 
-  @Post('close')
-  close(@Body() body: CloseCashDto) {
-    return this.cash.close(Number(body?.closingAmount ?? 0));
+  // ===== Operaciones de caja =====
+  @Post('cash/open')
+  open(@Body() dto: OpenCashDto) {
+    return this.cash.open(Number(dto?.openingAmount ?? 0));
   }
 
-  // Movimiento manual (ingreso/egreso/venta)
-  @Post('movement')
+  @Post('cash/close')
+  close(@Body() dto: CloseCashDto) {
+    return this.cash.close(Number(dto?.closingAmount ?? 0));
+  }
+
+  @Post('cash/movement')
   movement(@Body() body: MovementDto) {
     return this.cash.movement({
       amount: Number(body?.amount ?? 0),
@@ -44,13 +51,13 @@ export class CashController {
     });
   }
 
-  @Get('status')
+  @Get('cash/status')
   isOpen() {
     return this.cash.isOpen();
   }
 
-  // ✅ Confirmar venta desde “Caja”
-  @Post('checkout')
+  // ===== Checkout POS (alias para tu front) =====
+  @Post('sales/checkout')
   checkout(@Body() dto: CheckoutDto) {
     return this.cash.checkout(dto as any);
   }

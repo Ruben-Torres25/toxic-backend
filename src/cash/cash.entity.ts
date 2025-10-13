@@ -1,12 +1,4 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  UpdateDateColumn,
-  ManyToOne,
-  JoinColumn,
-} from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 
 @Entity('cash_sessions')
 export class CashSession {
@@ -32,8 +24,7 @@ export class CashSession {
   isOpen!: boolean;
 }
 
-// 👇 Ampliamos los tipos para poder guardar “open” y “close”
-export type MovementKind = 'income' | 'expense' | 'sale' | 'open' | 'close';
+export type MovementKind = 'income' | 'expense' | 'sale';
 
 @Entity('cash_movements')
 export class CashMovement {

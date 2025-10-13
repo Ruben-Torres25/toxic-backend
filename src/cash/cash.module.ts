@@ -1,23 +1,15 @@
-// src/cash/cash.module.ts
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-
 import { CashController } from './cash.controller';
 import { CashService } from './cash.service';
-
 import { CashMovement, CashSession } from './cash.entity';
-import { Product } from '../products/product.entity'; // ⬅️ Necesario para inyectar ProductRepository
-import { LedgerModule } from '../ledger/ledger.module'; // ⬅️ Donde está LedgerService
+import { LedgerModule } from '../ledger/ledger.module';
+import { Product } from '../products/product.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      CashMovement,
-      CashSession,
-      Product, // ⬅️ clave para resolver "ProductRepository" en CashService
-    ]),
-    // si hay dependencia cruzada con Ledger, forwardRef:
-    forwardRef(() => LedgerModule),
+    TypeOrmModule.forFeature([CashMovement, CashSession, Product]),
+    LedgerModule,
   ],
   controllers: [CashController],
   providers: [CashService],
