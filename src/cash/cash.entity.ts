@@ -1,11 +1,18 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 
 @Entity('cash_sessions')
 export class CashSession {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  // Si tu tabla tiene una columna DATE real, este campo puede ser 'date' (type: 'date')
   @Column({ type: 'date', nullable: true })
   date!: Date | null;
 
@@ -25,7 +32,8 @@ export class CashSession {
   isOpen!: boolean;
 }
 
-export type MovementKind = 'income' | 'expense' | 'sale';
+// 👇 Ampliamos los tipos para poder guardar “open” y “close”
+export type MovementKind = 'income' | 'expense' | 'sale' | 'open' | 'close';
 
 @Entity('cash_movements')
 export class CashMovement {
@@ -38,7 +46,6 @@ export class CashMovement {
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamp with time zone' })
   updatedAt!: Date;
 
-  // IMPORTANTE: default:0 y NOT NULL en DB (ya lo dejaste así)
   @Column({ type: 'numeric', default: 0 })
   amount!: number;
 
@@ -51,7 +58,6 @@ export class CashMovement {
   @Column({ name: 'occurred_at', type: 'timestamp with time zone', nullable: true })
   occurredAt!: Date | null;
 
-  // Relación a la sesión (session_id uuid NOT NULL con FK)
   @Column({ name: 'session_id', type: 'uuid' })
   sessionId!: string;
 
