@@ -5,6 +5,7 @@ import { Customer } from './customer.entity';
 import { CustomerMovement, MovementType } from './customer-movement.entity';
 import { CreateCustomerDto, UpdateCustomerDto } from './dto';
 import { Order } from '../orders/order.entity'; // IMPORT RELATIVO
+import { LedgerService } from '../ledger/ledger.service'; // 👈 NUEVO
 
 @Injectable()
 export class CustomersService {
@@ -12,6 +13,7 @@ export class CustomersService {
     @InjectRepository(Customer) private readonly repo: Repository<Customer>,
     @InjectRepository(CustomerMovement) private readonly movRepo: Repository<CustomerMovement>,
     @InjectRepository(Order) private readonly orderRepo: Repository<Order>,
+    private readonly ledger: LedgerService, // 👈 NUEVO
   ) {}
 
   findAll() {
@@ -45,7 +47,13 @@ export class CustomersService {
     await this.repo.delete(id);
   }
 
-  // amount: +pago, -deuda, 0=ajuste
+  /**
+   * Ajuste manual:
+   *  - amount > 0 => PAYMENT (disminuye deuda)
+   *  - amount < 0 => DEBT    (aumenta deuda)
+   *  - amount = 0 => ADJUST
+   * (Se mantiene en customer_movements para compat.)
+   */
   async adjust(id: string, amount: number, reason?: string) {
     const c = await this.findOne(id);
     const signed = Number(amount);
@@ -68,40 +76,60 @@ export class CustomersService {
     return c;
   }
 
+  /**
+   * ⭐ Ahora los “movements” salen del LEDGER como fuente de verdad.
+   * Mapeo:
+   *  - order       => type: 'charge'  (aumenta deuda)   amount > 0
+   *  - payment     => type: 'payment' (disminuye deuda) amount < 0
+   *  - credit_note => type: 'payment' (disminuye deuda) amount < 0
+   */
   async listMovements(id: string) {
     await this.findOne(id);
-    return this.movRepo.find({
-      where: { customer: { id } },
-      order: { createdAt: 'DESC' },
+
+    const res = await this.ledger.list({
+      customerId: id,
+      page: 1,
+      pageSize: 200, // suficiente para vista; ajustá si necesitás paginar
     });
+
+    const mapType = (t: string) => (t === 'order' ? 'charge' : 'payment');
+
+    // Devolvemos en la forma { id, createdAt, updatedAt, type, amount, reason }
+    // para no romper el front que ya consume /customers/:id/movements
+    return res.items.map((it: any) => ({
+      id: it.id,
+      createdAt: it.date,
+      updatedAt: it.updatedAt ?? null,
+      type: mapType(it.type),
+      amount: Number(it.amount),
+      reason: it.description ?? null,
+    }));
   }
 
   // === Stats de pedidos por cliente ===
-  // === Stats de pedidos por cliente ===
-async stats(id: string) {
-  await this.findOne(id);
+  async stats(id: string) {
+    await this.findOne(id);
 
-  // COUNT(*)
-  const raw = await this.orderRepo
-    .createQueryBuilder('o')
-    .where('o.customer_id = :id', { id })
-    .select('COUNT(*)', 'cnt')
-    .getRawOne<{ cnt: string }>(); // <- puede ser undefined
+    // COUNT(*)
+    const raw = await this.orderRepo
+      .createQueryBuilder('o')
+      .where('o.customer_id = :id', { id })
+      .select('COUNT(*)', 'cnt')
+      .getRawOne<{ cnt: string }>();
 
-  const orderCount = Number(raw?.cnt ?? 0);
+    const orderCount = Number(raw?.cnt ?? 0);
 
-  // Último pedido por fecha de creación
-  const last = await this.orderRepo
-    .createQueryBuilder('o')
-    .where('o.customer_id = :id', { id })
-    .orderBy('o.createdAt', 'DESC')
-    .select(['o.id', 'o.createdAt'])
-    .getOne();
+    // Último pedido por fecha de creación
+    const last = await this.orderRepo
+      .createQueryBuilder('o')
+      .where('o.customer_id = :id', { id })
+      .orderBy('o.createdAt', 'DESC')
+      .select(['o.id', 'o.createdAt'])
+      .getOne();
 
-  return {
-    orderCount,
-    lastOrderDate: last?.createdAt ?? null,
-  };
-}
-
+    return {
+      orderCount,
+      lastOrderDate: last?.createdAt ?? null,
+    };
+  }
 }

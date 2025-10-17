@@ -1,4 +1,16 @@
-import { Controller, Get, Param, Patch, Post, Body, Query, Delete } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Body,
+  Query,
+  Delete,
+  ParseUUIDPipe,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto, UpdateOrderDto } from './dto';
 
@@ -20,35 +32,41 @@ export class OrdersController {
 
   @Get(':id')
   get(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Query('include') includeStr?: string,
   ) {
+    // Ultra-defensivo si algún cliente pegó un '?' en el :id
+    const safeId = id.split('?')[0];
     const include = (includeStr?.split(',').filter(Boolean) ?? []) as IncludeParam[];
-    return this.service.get(id, include);
+    return this.service.get(safeId, include);
   }
 
   @Post()
+  @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateOrderDto) {
     return this.service.create(dto);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateOrderDto) {
+  update(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: UpdateOrderDto,
+  ) {
     return this.service.update(id, dto);
   }
 
   @Patch(':id/confirm')
-  confirm(@Param('id') id: string) {
+  confirm(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     return this.service.confirm(id);
   }
 
   @Patch(':id/cancel')
-  cancel(@Param('id') id: string) {
+  cancel(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     return this.service.cancel(id);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
+  remove(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     return this.service.remove(id);
   }
 }

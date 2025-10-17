@@ -3,28 +3,43 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
-export class CreditNoteItemDto {
+// Formato A: por orderItemId (recomendado si el pedido ya existe)
+export class CreditNoteItemByOrderItemDto {
+  @IsString() @IsNotEmpty()
+  orderItemId!: string;
+
+  @IsOptional() @IsNumber()
+  unitPrice?: number;
+
+  @IsOptional() @IsNumber()
+  quantity?: number; // default 1
+
+  @IsOptional() @IsNumber()
+  discount?: number;
+
+  @IsOptional() @IsNumber()
+  taxRate?: number; // default 0.21
+}
+
+// Formato B: por productId (requiere precio y cantidad)
+export class CreditNoteItemByProductDto {
   @IsString() @IsNotEmpty()
   productId!: string;
 
-  @IsOptional() @IsString()
-  description?: string;
-
-  // Precio SIN IVA
   @IsNumber()
   unitPrice!: number;
 
   @IsNumber()
   quantity!: number;
 
-  // Monto absoluto de descuento ($) sobre base sin IVA
-  @IsNumber()
-  discount!: number;
-
-  // Alícuota opcional (por defecto 0.21)
   @IsOptional() @IsNumber()
-  taxRate?: number;
+  discount?: number;
+
+  @IsOptional() @IsNumber()
+  taxRate?: number; // default 0.21
 }
+
+export type CreditNoteItemDto = CreditNoteItemByOrderItemDto | CreditNoteItemByProductDto;
 
 export class CreateCreditNoteDto {
   @IsString() @IsNotEmpty()
@@ -44,7 +59,7 @@ export class CreateCreditNoteDto {
 
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => CreditNoteItemDto)
+  @Type(() => Object)
   items!: CreditNoteItemDto[];
 }
 

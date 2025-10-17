@@ -39,7 +39,7 @@ export class CustomersController {
 
   @Get(':id/movements')
   movements(@Param('id') id: string) {
-    return this.service.listMovements(id);
+    return this.service.listMovements(id); // 👈 ahora sale del ledger
   }
 
   // NUEVO: stats
